@@ -1,0 +1,206 @@
+from telegram import Update
+from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes, filters, ConversationHandler
+from datetime import datetime
+
+TOKEN = "7684090902:AAGDnPOvdQv8Cs_CUiVwN41tpYiHtAqzD-U"
+
+# === Data Produk ===
+harga_produk = {
+    "﹄ Wetv ": {
+        "private": 24000,
+        "sharing 3u": 10000,
+        "sharing 6u": 5000
+    },
+    "﹄ Netflix ": {
+        "private": 30000,
+        "sharing": 7000
+    },
+    "﹄ Viu Anlim ": {
+        "1 bulan": 1500,
+        "2 bulan": 1000,
+        "3 bulan": 3500,
+        "6 bulan": 4500,
+        "12 bulan": 7000
+    },
+    "﹄ Prime Video ": {
+        "private": 8000,
+        "nogaran": 5000,
+        "sharing 2u": 5000,
+        "sharing 4u": 3000
+    },
+    "﹄ Youtube Famplan ": {
+        "1 bulan": 1500,
+        "2 bulan": 3000
+    },
+    "﹄ Vidio All Device ": {
+        "private": 15000,
+        "sharing": 8000,
+        "only tv": 8000,
+        "bulk 5 acc": 140000
+    },
+}
+
+# === Tampilkan Menu ===
+def tampilkan_menu():
+    menu = "📋 Daftar Produk:\n"
+    for idx, produk in enumerate(harga_produk.keys(), 1):
+        menu += f"{idx}. \"{produk}\"\n\n"
+    menu += "Pilih opsi yang bener broo!!"
+    return menu
+
+# === Tampilkan Rekap Pembelian ===
+def tampilkan_rekap(user_data):
+    if 'rekap' in user_data and user_data['rekap']:
+        tanggal = datetime.now().strftime("%d-%m-%Y")
+        rekap = f"🗓 Rekap Pembelian Tanggal {tanggal}:\n\n"
+        total = 0
+        for produk, varian_data in user_data['rekap'].items():
+            for varian, list_harga in varian_data.items():
+                jumlah = len(list_harga)
+                subtotal = sum(list_harga)
+                rekap += f"\"{produk}\" ({varian}) x{jumlah} = {subtotal:,} IDR\n"
+                total += subtotal
+        rekap += f"\n💰 Total Pembayaran: {total:,} IDR"
+        return rekap
+    else:
+        return "❌ Belum ada produk yang dibeli."
+
+# === /start ===
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("Selamat datang! Ketik nomor produk untuk mulai membeli.")
+    await update.message.reply_text(tampilkan_menu())
+
+# === Reset /new ===
+async def new_day(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data.clear()
+    await update.message.reply_text("✅ Transaksi telah direset.")
+    await update.message.reply_text(tampilkan_menu())
+
+# === Proses Pilih Produk ===
+async def proses_beli(update: Update, context: ContextTypes.DEFAULT_TYPE, text: str):
+    try:
+        produk_index = int(text) - 1
+        produk_list = list(harga_produk.keys())
+
+        if 0 <= produk_index < len(produk_list):
+            produk = produk_list[produk_index]
+            context.user_data['produk_terpilih'] = produk
+            pilihan = list(harga_produk[produk].keys())
+
+            opsi_text = f"Anda memilih: \"{produk}\"\nPilih opsi:\n\n"
+            for idx, opsi in enumerate(pilihan, 1):
+                opsi_text += f"{idx}. {opsi} - {harga_produk[produk][opsi]:,} IDR\n"
+            opsi_text += "0. Kembali ke Menu Awal\n\nPilih opsi yang bener broo!!"
+
+            context.user_data['tipe_pilihan'] = 'angka'
+            await update.message.reply_text(opsi_text)
+
+        else:
+            await update.message.reply_text("❗️ Produk tidak ditemukan.")
+            await start(update, context)
+    except ValueError:
+        await update.message.reply_text("❗️ Input tidak valid.")
+        await start(update, context)
+
+# === Proses Pilih Opsi ===
+async def pilih_opsi(update: Update, context: ContextTypes.DEFAULT_TYPE, text: str):
+    produk = context.user_data.get('produk_terpilih')
+    tipe = context.user_data.get('tipe_pilihan')
+
+    if not produk:
+        await start(update, context)
+        return
+
+    pilihan = list(harga_produk[produk].keys())
+
+    if text == "0":
+        context.user_data.pop('produk_terpilih', None)
+        await update.message.reply_text(tampilkan_menu())
+        return
+
+    if text.isdigit() and 1 <= int(text) <= len(pilihan):
+        varian = pilihan[int(text) - 1]
+        context.user_data['varian_terpilih'] = varian
+        await update.message.reply_text("Mau beli berapa banyak bro?")
+    else:
+        await update.message.reply_text("❗️ Pilihan tidak valid.")
+        await start(update, context)
+
+# === Proses Jumlah Pembelian ===
+async def proses_jumlah(update: Update, context: ContextTypes.DEFAULT_TYPE, text: str):
+    produk = context.user_data.get('produk_terpilih')
+    varian = context.user_data.get('varian_terpilih')
+
+    if not produk or not varian:
+        await start(update, context)
+        return
+
+    if text.isdigit() and int(text) > 0:
+        jumlah = int(text)
+        harga = harga_produk[produk][varian]
+
+        rekap = context.user_data.setdefault("rekap", {})
+        if produk not in rekap:
+            rekap[produk] = {}
+        if varian not in rekap[produk]:
+            rekap[produk][varian] = []
+        rekap[produk][varian].extend([harga] * jumlah)
+
+        # Reset state
+        context.user_data.pop("produk_terpilih", None)
+        context.user_data.pop("varian_terpilih", None)
+
+        await update.message.reply_text(f"✅ Pembelian berhasil: \"{produk}\" ({varian}) x{jumlah} = {jumlah * harga:,} IDR")
+        await update.message.reply_text(tampilkan_rekap(context.user_data))
+        await update.message.reply_text(tampilkan_menu())
+    else:
+        await update.message.reply_text("❗️ Jumlah tidak valid. Ketik angka lebih dari 0.")
+
+# === Tambah Produk Baru ===
+async def add_produk(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    try:
+        args = context.args
+        if len(args) < 3:
+            await update.message.reply_text("Format: /add [nama_produk] [nama_varian] [harga]")
+            return
+
+        nama_produk = "﹄ " + args[0].capitalize() + " "
+        nama_varian = " ".join(args[1:-1]).lower()
+        harga = int(args[-1])
+
+        if nama_produk not in harga_produk:
+            harga_produk[nama_produk] = {}
+
+        harga_produk[nama_produk][nama_varian] = harga
+        await update.message.reply_text(f"✅ Produk ditambahkan: {nama_produk} - {nama_varian} ({harga:,} IDR)")
+    except Exception as e:
+        await update.message.reply_text(f"❌ Gagal menambahkan produk. Error: {e}")
+
+# === Handle Pesan ===
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text.strip().lower()
+
+    if text == 'q':
+        await update.message.reply_text(tampilkan_rekap(context.user_data))
+        await update.message.reply_text(tampilkan_menu())
+    elif context.user_data.get("varian_terpilih"):
+        await proses_jumlah(update, context, text)
+    elif context.user_data.get("produk_terpilih"):
+        await pilih_opsi(update, context, text)
+    elif text.isdigit():
+        await proses_beli(update, context, text)
+    else:
+        await update.message.reply_text("❗️ Ketik nomor produk atau 'q' untuk rekap.")
+
+# === Main Bot ===
+def main():
+    app = ApplicationBuilder().token(TOKEN).build()
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("new", new_day))
+    app.add_handler(CommandHandler("add", add_produk))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    print("Bot aktif...")
+    app.run_polling()
+
+if __name__ == "__main__":
+    main()
